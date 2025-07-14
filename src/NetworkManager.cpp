@@ -239,6 +239,7 @@ WebSocketHandlePtr NetworkManager::WebSocket(const WebSocketArgs& args)
 	auto handle = std::make_shared<WebSocketHandle>();
 	handle->onClose = args.onClose;
 
+	handle->sendThreaded = args.sendThreaded;
 	handle->webSocket.setUrl(args.url);
 	handle->webSocket.setTLSOptions(this->tlsOptions);
 	handle->webSocket.setOnMessageCallback(args.onMessage);
@@ -267,6 +268,10 @@ WebSocketHandlePtr NetworkManager::WebSocket(const WebSocketArgs& args)
 	}
 
 	handle->webSocket.start();
+	if (handle->sendThreaded)
+	{
+          handle->sendThread = std::thread(&WebSocketHandle::SendThread, handle);
+	}
 
 	webSocketHandles.push_back(handle);
 
@@ -325,7 +330,37 @@ int HttpRequestFuture::Cancel(lua_State *L)
 }
 
 WebSocketHandle::~WebSocketHandle() {
+	if (sendThreaded)
+	{
+		{
+			std::lock_guard<std::mutex> lock(sendQueueMutex);
+			stopFlag = true;
+		}
+        sendQueueCV.notify_all();
+		if (sendThread.joinable())
+		{
+			sendThread.join();
+		}	
+	}
 	webSocket.stop();
+}
+
+void WebSocketHandle::SendThread() {
+	while (true) {
+		std::unique_lock<std::mutex> lock(sendQueueMutex);
+		sendQueueCV.wait(lock, [&] { return !sendQueue.empty() || stopFlag; });
+
+		if (stopFlag && sendQueue.empty())
+		{
+			break;
+		}
+
+		std::string message = std::move(sendQueue.front());
+        sendQueue.pop();
+		lock.unlock();
+
+		webSocket.send(message);
+	}
 }
 
 int WebSocketHandle::Collect(lua_State *L)
@@ -364,9 +399,19 @@ int WebSocketHandle::Send(lua_State *L)
 
 	bool binary = lua_toboolean(L, 3);
 
-	auto info = handle->webSocket.send(data, binary);
-
-	lua_pushboolean(L, info.success);
+	if (handle->sendThreaded)
+	{
+        {
+            std::lock_guard<std::mutex> lock(handle->sendQueueMutex);
+			handle->sendQueue.push(data);
+		}
+        handle->sendQueueCV.notify_one();
+    }
+	else
+	{
+        auto info = handle->webSocket.send(data, binary);
+		lua_pushboolean(L, info.success);
+	}
 	return 1;
 }
 
@@ -678,6 +723,17 @@ public:
 			luaL_error(L, "url must be a string");
 		}
 		lua_pop(L, 1);
+
+		lua_getfield(L, 1, "sendThreaded");
+        if (!lua_isnil(L, -1) && !lua_isboolean(L, -1))
+		{
+            luaL_error(L, "threaded must be a boolean");
+		}
+		else
+		{
+          args.sendThreaded = lua_toboolean(L, -1);
+		}
+        lua_pop(L, 1);
 
 		lua_getfield(L, 1, "headers");
 		if (!lua_isnil(L, -1)) {

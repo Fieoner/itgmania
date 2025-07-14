@@ -102,6 +102,7 @@ struct WebSocketArgs
 	int handshakeTimeout = -1;
 	int pingInterval = -1;
 	bool automaticReconnect = true;
+    bool sendThreaded = false;
 	std::function<void(const ix::WebSocketMessagePtr& response)> onMessage;
 	std::function<void()> onClose;
 };
@@ -111,6 +112,8 @@ class WebSocketHandle
 public:
 	WebSocketHandle() {};
 	~WebSocketHandle();
+
+	void SendThread();
 	
 	static int Collect(lua_State *L);
 	static int Close(lua_State *L);
@@ -118,6 +121,13 @@ public:
 
 	ix::WebSocket webSocket;
 	std::function<void()> onClose;
+
+	bool sendThreaded;
+    std::thread sendThread;
+    std::queue<std::string> sendQueue;
+    std::mutex sendQueueMutex;
+    std::condition_variable sendQueueCV;
+    std::atomic<bool> stopFlag;
 };
 
 typedef std::shared_ptr<WebSocketHandle> WebSocketHandlePtr;
