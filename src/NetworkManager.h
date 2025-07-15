@@ -127,7 +127,7 @@ public:
     std::queue<std::string> sendQueue;
     std::mutex sendQueueMutex;
     std::condition_variable sendQueueCV;
-    std::atomic<bool> stopFlag;
+    std::atomic<bool> stopFlag = false;
 };
 
 typedef std::shared_ptr<WebSocketHandle> WebSocketHandlePtr;
