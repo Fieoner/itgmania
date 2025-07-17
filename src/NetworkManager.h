@@ -79,7 +79,7 @@ struct HttpRequestArgs {
 
 class HttpRequestFuture {
  public:
-  HttpRequestFuture(ix::HttpRequestArgsPtr& args) : args(args) {};
+  HttpRequestFuture(ix::HttpRequestArgsPtr& args) : args(args){};
 
   static int Collect(lua_State* L);
   static int Cancel(lua_State* L);
@@ -122,7 +122,7 @@ struct WebSocketArgs {
 
 class WebSocketHandle {
  public:
-  WebSocketHandle() {};
+  WebSocketHandle(){};
   ~WebSocketHandle();
 
   void SendThread();
@@ -133,17 +133,17 @@ class WebSocketHandle {
 
   ix::WebSocket webSocket;
   std::function<void()> onClose;
-  std::function<void(const CopiedWebSocketMessage* response)> onMessage;
 
   std::queue<CopiedWebSocketMessage> readQueue;
-  std::mutex readQueueMutex;
+  std::mutex readMutex;
+  std::function<void(const CopiedWebSocketMessage* response)> onMessage;
 
   bool sendThreaded;
   std::thread sendThread;
   std::queue<std::string> sendQueue;
   std::mutex sendQueueMutex;
   std::condition_variable sendQueueCV;
-  std::atomic<bool> stopFlag;
+  std::atomic<bool> stopFlag = false;
 };
 
 typedef std::shared_ptr<WebSocketHandle> WebSocketHandlePtr;
