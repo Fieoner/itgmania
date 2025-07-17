@@ -109,6 +109,19 @@ NetworkManager::~NetworkManager()
 	ix::uninitNetSystem();
 }
 
+void NetworkManager::Update(float fDelta)
+{
+	for (std::shared_ptr<WebSocketHandle> handle : webSocketHandles)
+	{
+		std::lock_guard mtxLock(handle->readQueueMutex);
+        while (!handle->readQueue.empty())
+		{
+            handle->onMessage(&handle->readQueue.front());
+            handle->readQueue.pop();
+		}
+	}
+}
+
 bool NetworkManager::IsUrlAllowed(const std::string& url)
 {
 	if (!this->httpEnabled.Get())
@@ -238,11 +251,16 @@ WebSocketHandlePtr NetworkManager::WebSocket(const WebSocketArgs& args)
 {
 	auto handle = std::make_shared<WebSocketHandle>();
 	handle->onClose = args.onClose;
+	handle->onMessage = args.onMessage;
 
 	handle->sendThreaded = args.sendThreaded;
 	handle->webSocket.setUrl(args.url);
 	handle->webSocket.setTLSOptions(this->tlsOptions);
-	handle->webSocket.setOnMessageCallback(args.onMessage);
+	//handle->webSocket.setOnMessageCallback(args.onMessage);
+	handle->webSocket.setOnMessageCallback([handle](const ix::WebSocketMessagePtr& response) {
+		std::lock_guard mutexLock(handle->readQueueMutex);
+        handle->readQueue.emplace(response);
+	});
 
 	ix::WebSocketHttpHeaders headers;
 	headers["User-Agent"] = this->GetUserAgent();
@@ -823,7 +841,7 @@ public:
 		}
 		lua_pop(L, 1);
 
-		args.onMessage = [onMessageRef](const ix::WebSocketMessagePtr& msg)
+		args.onMessage = [onMessageRef](const CopiedWebSocketMessage* msg)
 		{
 			Lua *L = LUA->Get();
 
@@ -1046,7 +1064,7 @@ private:
 		LuaHelpers::RunScriptOnStack(L, error, 1, 0, true);
 	}
 
-	static void handleMessage(Lua *L, const ix::WebSocketMessagePtr& msg, int onMessageRef)
+	static void handleMessage(Lua* L, const CopiedWebSocketMessage* msg, int onMessageRef)
 	{
 		lua_rawgeti(L, LUA_REGISTRYINDEX, onMessageRef);
 

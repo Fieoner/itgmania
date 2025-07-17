@@ -1,8 +1,10 @@
 #ifndef NETWORK_MANAGER_H
 #define NETWORK_MANAGER_H
 
-#include "Preference.h"
-#include "StdString.h"
+#include <ixwebsocket/IXHttp.h>
+#include <ixwebsocket/IXHttpClient.h>
+#include <ixwebsocket/IXSocketTLSOptions.h>
+#include <ixwebsocket/IXWebSocket.h>
 
 #include <atomic>
 #include <functional>
@@ -11,157 +13,173 @@
 #include <string>
 #include <unordered_map>
 
-#include <ixwebsocket/IXHttp.h>
-#include <ixwebsocket/IXHttpClient.h>
-#include <ixwebsocket/IXSocketTLSOptions.h>
-#include <ixwebsocket/IXWebSocket.h>
-
 #include "EnumHelper.h"
 #include "LuaManager.h"
+#include "Preference.h"
+#include "StdString.h"
 
 struct lua_State;
 
-enum HttpErrorCode
-{
-	HttpErrorCode_Blocked,
-	HttpErrorCode_UnknownError,
-	HttpErrorCode_FileError,
+enum HttpErrorCode {
+  HttpErrorCode_Blocked,
+  HttpErrorCode_UnknownError,
+  HttpErrorCode_FileError,
 
-	// from IXWebSocket
-	HttpErrorCode_CannotConnect,
-	HttpErrorCode_Timeout,
-	HttpErrorCode_Gzip,
-	HttpErrorCode_UrlMalformed,
-	HttpErrorCode_CannotCreateSocket,
-	HttpErrorCode_SendError,
-	HttpErrorCode_ReadError,
-	HttpErrorCode_CannotReadStatusLine,
-	HttpErrorCode_MissingStatus,
-	HttpErrorCode_HeaderParsingError,
-	HttpErrorCode_MissingLocation,
-	HttpErrorCode_TooManyRedirects,
-	HttpErrorCode_ChunkReadError,
-	HttpErrorCode_CannotReadBody,
-	HttpErrorCode_Cancelled,
+  // from IXWebSocket
+  HttpErrorCode_CannotConnect,
+  HttpErrorCode_Timeout,
+  HttpErrorCode_Gzip,
+  HttpErrorCode_UrlMalformed,
+  HttpErrorCode_CannotCreateSocket,
+  HttpErrorCode_SendError,
+  HttpErrorCode_ReadError,
+  HttpErrorCode_CannotReadStatusLine,
+  HttpErrorCode_MissingStatus,
+  HttpErrorCode_HeaderParsingError,
+  HttpErrorCode_MissingLocation,
+  HttpErrorCode_TooManyRedirects,
+  HttpErrorCode_ChunkReadError,
+  HttpErrorCode_CannotReadBody,
+  HttpErrorCode_Cancelled,
 
-	NUM_HttpErrorCode,
-	HttpErrorCode_Invalid,
+  NUM_HttpErrorCode,
+  HttpErrorCode_Invalid,
 };
 const RString& HttpErrorCodeToString(HttpErrorCode dc);
 HttpErrorCode StringToHttpErrorCode(const RString& sDC);
 LuaDeclareType(HttpErrorCode);
 
-enum WebSocketMessageType
-{
-	// from IXWebSocket
-	WebSocketMessageType_Message,
-	WebSocketMessageType_Open,
-	WebSocketMessageType_Close,
-	WebSocketMessageType_Error,
+enum WebSocketMessageType {
+  // from IXWebSocket
+  WebSocketMessageType_Message,
+  WebSocketMessageType_Open,
+  WebSocketMessageType_Close,
+  WebSocketMessageType_Error,
 
-	NUM_WebSocketMessageType,
-	WebSocketMessageType_Invalid,
+  NUM_WebSocketMessageType,
+  WebSocketMessageType_Invalid,
 };
 const RString& WebSocketMessageTypeToString(WebSocketMessageType dc);
 WebSocketMessageType StringToWebSocketMessageType(const RString& sDC);
 LuaDeclareType(WebSocketMessageType);
 
-struct HttpRequestArgs
-{
-	std::string url;
-	std::string method = ix::HttpClient::kGet;
-	std::string body;
-	std::string multipartBoundary;
-	std::unordered_map<std::string, std::string> headers;
-	int connectTimeout = -1;
-	int transferTimeout = -1;
-	std::string downloadFile;
-	std::function<bool(int current, int total)> onProgress;
-	std::function<void(const ix::HttpResponsePtr& response)> onResponse;
-	std::function<void(const std::string& errorMessage)> onFileError;
+struct HttpRequestArgs {
+  std::string url;
+  std::string method = ix::HttpClient::kGet;
+  std::string body;
+  std::string multipartBoundary;
+  std::unordered_map<std::string, std::string> headers;
+  int connectTimeout = -1;
+  int transferTimeout = -1;
+  std::string downloadFile;
+  std::function<bool(int current, int total)> onProgress;
+  std::function<void(const ix::HttpResponsePtr& response)> onResponse;
+  std::function<void(const std::string& errorMessage)> onFileError;
 };
 
-class HttpRequestFuture
-{
-public:
-	HttpRequestFuture(ix::HttpRequestArgsPtr& args) : args(args) {};
+class HttpRequestFuture {
+ public:
+  HttpRequestFuture(ix::HttpRequestArgsPtr& args) : args(args) {};
 
-	static int Collect(lua_State *L);
-	static int Cancel(lua_State *L);
+  static int Collect(lua_State* L);
+  static int Cancel(lua_State* L);
 
-private:
-	ix::HttpRequestArgsPtr args;
+ private:
+  ix::HttpRequestArgsPtr args;
 };
 
 typedef std::shared_ptr<HttpRequestFuture> HttpRequestFuturePtr;
 
-struct WebSocketArgs
-{
-	std::string url;
-	std::unordered_map<std::string, std::string> headers;
-	int handshakeTimeout = -1;
-	int pingInterval = -1;
-	bool automaticReconnect = true;
-    bool sendThreaded = false;
-	std::function<void(const ix::WebSocketMessagePtr& response)> onMessage;
-	std::function<void()> onClose;
+struct CopiedWebSocketMessage {
+  ix::WebSocketMessageType type;
+  const std::string str;
+  size_t wireSize;
+  ix::WebSocketErrorInfo errorInfo;
+  ix::WebSocketOpenInfo openInfo;
+  ix::WebSocketCloseInfo closeInfo;
+  bool binary;
+
+  CopiedWebSocketMessage(const ix::WebSocketMessagePtr& wsmp)
+      : type(wsmp->type),
+        str(wsmp->str),
+        wireSize(wsmp->wireSize),
+        errorInfo(wsmp->errorInfo),
+        openInfo(wsmp->openInfo),
+        closeInfo(wsmp->closeInfo),
+        binary(wsmp->binary) {}
 };
 
-class WebSocketHandle
-{
-public:
-	WebSocketHandle() {};
-	~WebSocketHandle();
+struct WebSocketArgs {
+  std::string url;
+  std::unordered_map<std::string, std::string> headers;
+  int handshakeTimeout = -1;
+  int pingInterval = -1;
+  bool automaticReconnect = true;
+  bool sendThreaded = false;
+  std::function<void(const CopiedWebSocketMessage* response)> onMessage;
+  std::function<void()> onClose;
+};
 
-	void SendThread();
-	
-	static int Collect(lua_State *L);
-	static int Close(lua_State *L);
-	static int Send(lua_State *L);
+class WebSocketHandle {
+ public:
+  WebSocketHandle() {};
+  ~WebSocketHandle();
 
-	ix::WebSocket webSocket;
-	std::function<void()> onClose;
+  void SendThread();
 
-	bool sendThreaded;
-    std::thread sendThread;
-    std::queue<std::string> sendQueue;
-    std::mutex sendQueueMutex;
-    std::condition_variable sendQueueCV;
-    std::atomic<bool> stopFlag = false;
+  static int Collect(lua_State* L);
+  static int Close(lua_State* L);
+  static int Send(lua_State* L);
+
+  ix::WebSocket webSocket;
+  std::function<void()> onClose;
+  std::function<void(const CopiedWebSocketMessage* response)> onMessage;
+
+  std::queue<CopiedWebSocketMessage> readQueue;
+  std::mutex readQueueMutex;
+
+  bool sendThreaded;
+  std::thread sendThread;
+  std::queue<std::string> sendQueue;
+  std::mutex sendQueueMutex;
+  std::condition_variable sendQueueCV;
+  std::atomic<bool> stopFlag;
 };
 
 typedef std::shared_ptr<WebSocketHandle> WebSocketHandlePtr;
 
-class NetworkManager
-{
-public:
-	NetworkManager();
-	~NetworkManager();
+class NetworkManager {
+ public:
+  NetworkManager();
+  ~NetworkManager();
 
-	bool IsUrlAllowed(const std::string& url);
-	HttpRequestFuturePtr HttpRequest(const HttpRequestArgs& args);
-	WebSocketHandlePtr WebSocket(const WebSocketArgs& args);
-	std::string UrlEncode(const std::string& value);
-	std::string EncodeQueryParameters(const std::unordered_map<std::string, std::string>& query);
+  bool IsUrlAllowed(const std::string& url);
+  HttpRequestFuturePtr HttpRequest(const HttpRequestArgs& args);
+  WebSocketHandlePtr WebSocket(const WebSocketArgs& args);
+  std::string UrlEncode(const std::string& value);
+  std::string EncodeQueryParameters(
+      const std::unordered_map<std::string, std::string>& query);
 
-	// Lua
-	void PushSelf(lua_State *L);
+  void Update(float fDelta);
 
-private:
-	std::string GetUserAgent();
-	void ClearDownloads();
+  // Lua
+  void PushSelf(lua_State* L);
 
-	ix::HttpClient httpClient;
-	ix::HttpClient downloadClient;
-	ix::SocketTLSOptions tlsOptions;
+ private:
+  std::string GetUserAgent();
+  void ClearDownloads();
 
-	static Preference<bool> httpEnabled;
-	static Preference<RString> httpAllowHosts;
+  ix::HttpClient httpClient;
+  ix::HttpClient downloadClient;
+  ix::SocketTLSOptions tlsOptions;
 
-	std::vector<std::shared_ptr<WebSocketHandle>> webSocketHandles;
+  static Preference<bool> httpEnabled;
+  static Preference<RString> httpAllowHosts;
+
+  std::vector<std::shared_ptr<WebSocketHandle>> webSocketHandles;
 };
 
-extern NetworkManager*	NETWORK;
+extern NetworkManager* NETWORK;
 
 #endif
 
